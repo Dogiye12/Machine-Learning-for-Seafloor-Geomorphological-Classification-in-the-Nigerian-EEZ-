@@ -1,0 +1,80 @@
+import rasterio
+import numpy as np
+import matplotlib.pyplot as plt
+
+files = ["2019.tif", "2021.tif", "2023.tif", "2025.tif"]
+
+rasters = []
+for f in files:
+    with rasterio.open(f) as src:
+        rasters.append(src.read(1))
+        print(f"{f} → CRS: {src.crs}, Resolution: {src.res}, Shape: {src.shape}")
+from rasterio.merge import merge
+
+# Assuming same CRS; else reproject to EPSG:4326 or EPSG:32632 (UTM Zone 32N)
+# Stack the arrays
+stack = np.stack(rasters, axis=0)
+print("Stack shape:", stack.shape)
+
+delta_21_19 = stack[1] - stack[0]
+delta_23_21 = stack[2] - stack[1]
+delta_25_23 = stack[3] - stack[2]
+
+import richdem as rd
+
+dem = rd.LoadGDAL('2025.tif')
+slope = rd.TerrainAttribute(dem, attrib='slope_degrees')
+curv = rd.TerrainAttribute(dem, attrib='curvature')
+
+
+import pandas as pd
+
+# Example training data structure
+train_df = pd.DataFrame({
+    'slope': slope_samples,
+    'curvature': curv_samples,
+    'delta_depth': delta_25_23_samples,
+    'class': geomorph_class  # e.g., canyon, ridge, plain
+})
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+
+X = train_df[['slope', 'curvature', 'delta_depth']]
+y = train_df['class']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+rf = RandomForestClassifier(n_estimators=200, random_state=42)
+rf.fit(X_train, y_train)
+
+print(classification_report(y_test, rf.predict(X_test)))
+
+
+rows, cols = slope.shape
+features = np.column_stack((
+    slope.flatten(),
+    curv.flatten(),
+    delta_25_23.flatten()
+))
+
+predictions = rf.predict(features)
+classified_map = predictions.reshape(rows, cols)
+
+
+with rasterio.open(
+    'geomorph_classification.tif',
+    'w',
+    driver='GTiff',
+    height=classified_map.shape[0],
+    width=classified_map.shape[1],
+    count=1,
+    dtype='int16',
+    crs=src.crs,
+    transform=src.transform
+) as dst:
+    dst.write(classified_map, 1)
+plt.imshow(classified_map, cmap='tab20')
+plt.title('Seafloor Geomorphology – Nigerian EEZ (2025 Model)')
+plt.colorbar(label='Class ID')
+plt.show()
